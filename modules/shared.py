@@ -65,18 +65,6 @@ restricted_opts = {
     "outdir_save",
     "outdir_init_images"
 }
-ui_reorder_categories = [
-    "inpaint",
-    "sampler",
-    "dimensions",
-    "cfg",
-    "seed",
-    "batch",
-    "checkboxes",
-    "second_pass",
-    "override_settings",
-    "scripts",
-]
 
 
 def is_url(string):
@@ -252,11 +240,18 @@ def refresh_checkpoints():
     import modules.sd_models # pylint: disable=W0621
     return modules.sd_models.list_models()
 
+def refresh_vaes():
+    import modules.sd_vae # pylint: disable=W0621
+    modules.sd_vae.refresh_vae_list()
 
 def list_samplers():
     import modules.sd_samplers # pylint: disable=W0621
     modules.sd_samplers.set_samplers()
     return modules.sd_samplers.all_samplers
+
+def list_builtin_themes():
+    files = [os.path.splitext(f)[0] for f in os.listdir('javascript') if f.endswith('.css')]
+    return files
 
 def list_themes():
     fn = os.path.join('html', 'themes.json')
@@ -267,8 +262,9 @@ def list_themes():
             res = json.loads(f.read())
     else:
         res = []
-    builtin = ["black-orange", "gradio/default", "gradio/base", "gradio/glass", "gradio/monochrome", "gradio/soft"]
-    themes = sorted(set(builtin + [x['id'] for x in res if x['status'] == 'RUNNING' and 'test' not in x['id'].lower()]), key=str.casefold)
+    list_builtin_themes()
+    builtin = list_builtin_themes() + ["gradio/default", "gradio/base", "gradio/glass", "gradio/monochrome", "gradio/soft"]
+    themes = sorted(builtin) + sorted({x['id'] for x in res if x['status'] == 'RUNNING' and 'test' not in x['id'].lower()}, key=str.casefold)
     return themes
 
 
@@ -513,7 +509,6 @@ options_templates.update(options_section(('ui', "User Interface"), {
     "hidden_tabs": OptionInfo([], "Hidden UI tabs", ui_components.DropdownMulti, lambda: {"choices": list(tab_names)}),
     "ui_tab_reorder": OptionInfo("From Text, From Image, Process Image", "UI tabs order"),
     "ui_scripts_reorder": OptionInfo("Enable Dynamic Thresholding, ControlNet", "UI scripts order"),
-    "ui_reorder": OptionInfo(", ".join(ui_reorder_categories), "txt2img/img2img UI item order"),
 }))
 
 options_templates.update(options_section(('live-preview', "Live Previews"), {
@@ -824,7 +819,7 @@ def reload_gradio_theme(theme_name=None):
             'font':['Helvetica', 'ui-sans-serif', 'system-ui', 'sans-serif'],
             'font_mono':['IBM Plex Mono', 'ui-monospace', 'Consolas', 'monospace']
         }
-    if theme_name == "black-orange":
+    if theme_name in list_builtin_themes():
         gradio_theme = gr.themes.Default(**default_font_params)
     elif theme_name.startswith("gradio/"):
         if theme_name == "gradio/default":

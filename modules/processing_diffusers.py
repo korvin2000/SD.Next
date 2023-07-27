@@ -9,6 +9,12 @@ from modules.lora_diffusers import lora_state, unload_diffusers_lora
 from modules.processing import StableDiffusionProcessing
 
 
+try:
+    import diffusers
+except Exception as ex:
+    shared.log.error(f'Failed to import diffusers: {ex}')
+
+
 def encode_prompt(encoder, prompt):
     cfg = encoder.config
     # TODO implement similar hijack for diffusers text encoder but following diffusers pipeline.encode_prompt concepts
@@ -40,7 +46,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
 
     def set_pipeline_args(model, prompt, negative_prompt, **kwargs):
         args = {}
-        pipeline = model.main if model.__class__.__name__ == 'PriorPipeline' else model
+        pipeline = model
         signature = inspect.signature(type(pipeline).__call__)
         possible = signature.parameters.keys()
         generator_device = 'cpu' if shared.opts.diffusers_generator_device == "cpu" else shared.device
@@ -93,7 +99,8 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         shared.log.debug(f'Diffuser pipeline: {pipeline.__class__.__name__} task={sd_models.get_diffusers_task(model)} set={clean}')
         return args
 
-    if (not hasattr(shared.sd_model.scheduler, 'name')) or (shared.sd_model.scheduler.name != p.sampler_name) and (p.sampler_name != 'Default'):
+    is_karras_compatible = shared.sd_model.__class__.__init__.__annotations__.get("scheduler", None) == diffusers.schedulers.scheduling_utils.KarrasDiffusionSchedulers
+    if (not hasattr(shared.sd_model.scheduler, 'name')) or (shared.sd_model.scheduler.name != p.sampler_name) and (p.sampler_name != 'Default') and is_karras_compatible:
         sampler = sd_samplers.all_samplers_map.get(p.sampler_name, None)
         if sampler is None:
             sampler = sd_samplers.all_samplers_map.get("UniPC")
@@ -123,6 +130,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
     if shared.opts.diffusers_move_base:
         shared.sd_model.to(devices.device)
 
+    refiner_enabled = shared.sd_refiner is not None and p.enable_hr
     pipe_args = set_pipeline_args(
         model=shared.sd_model,
         prompt=prompts,
@@ -131,8 +139,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         negative_prompt_2=[p.refiner_negative] if len(p.refiner_negative) > 0 else negative_prompts,
         eta=shared.opts.eta_ddim,
         guidance_rescale=p.diffusers_guidance_rescale,
-        denoising_start=p.refiner_denoise_start,
-        denoising_end=p.refiner_denoise_end,
+        denoising_end=p.refiner_start if refiner_enabled and p.refiner_start > 0 and p.refiner_start < 1 else None,
         # aesthetic_score=shared.opts.diffusers_aesthetics_score,
         output_type='latent' if hasattr(shared.sd_model, 'vae') else 'np',
         **task_specific_kwargs
@@ -145,7 +152,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
     if shared.sd_refiner is None or not p.enable_hr:
         output.images = vae_decode(output.images, shared.sd_model)
 
-    if shared.sd_refiner is not None and p.enable_hr:
+    if refiner_enabled:
         for i in range(len(output.images)):
             if shared.opts.save and not p.do_not_save_samples and shared.opts.save_images_before_refiner and hasattr(shared.sd_model, 'vae'):
                 from modules.processing import create_infotext
@@ -182,8 +189,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
                 guidance_scale=p.image_cfg_scale if p.image_cfg_scale is not None else p.cfg_scale,
                 guidance_rescale=p.diffusers_guidance_rescale,
                 # aesthetic_score=shared.opts.diffusers_aesthetics_score,
-                denoising_start=p.refiner_denoise_start,
-                denoising_end=p.refiner_denoise_end,
+                denoising_start=p.refiner_start if p.refiner_start > 0 and p.refiner_start < 1 else None,
                 image=output.images[i],
                 output_type='latent' if hasattr(shared.sd_refiner, 'vae') else 'np',
             )

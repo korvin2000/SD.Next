@@ -21,6 +21,8 @@ Stuff to be added, in no particular order...
   - Fix DeepFloyd IF model
   - Redo Prompt parser for diffusers
   - Add unCLIP model
+  - Add ToMe support
+  - Add Training support
 - Technical debt:
   - Port **A1111** stuff
   - Port `p.all_hr_prompts`
