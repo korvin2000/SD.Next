@@ -533,6 +533,7 @@ def change_backend():
 
 def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=None, op='model'): # pylint: disable=unused-argument
     import torch # pylint: disable=reimported,redefined-outer-name
+    devices.set_cuda_params()
     if timer is None:
         timer = Timer()
     import logging
@@ -564,7 +565,6 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
     sd_model = None
 
     try:
-        devices.set_cuda_params()
         if shared.cmd_opts.ckpt is not None and model_data.initial: # initial load
             ckpt_basename = os.path.basename(shared.cmd_opts.ckpt)
             model_name = modelloader.find_diffuser(ckpt_basename)
@@ -591,6 +591,11 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
                 vae = sd_vae.load_vae_diffusers(None, vae_file, vae_source)
                 if vae is not None:
                     diffusers_load_config["vae"] = vae
+                elif shared.opts.diffusers_vae_upcast != 'default':
+                     # There is no good way to change vae.force_upcast while VAE is loading
+                    # as part of the pipeline or to override it after.
+                    # ?? =  True if shared.opts.diffusers_vae_upcast == 'true' else False
+                    shared.log.info(f'Diffusers VAE force upcast ({shared.opts.diffusers_vae_upcast}) is only supported with an explicit VAE.')
 
             if not os.path.isfile(checkpoint_info.path):
                 try:
@@ -654,13 +659,19 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             sd_model.watermark = NoWatermark()
 
         if hasattr(sd_model, "enable_model_cpu_offload"):
-            if shared.cmd_opts.medvram or shared.opts.diffusers_model_cpu_offload:
+            if (shared.cmd_opts.medvram and devices.backend != "directml") or shared.opts.diffusers_model_cpu_offload:
                 shared.log.debug(f'Diffusers {op}: enable model CPU offload')
                 sd_model.enable_model_cpu_offload()
         if hasattr(sd_model, "enable_sequential_cpu_offload"):
             if shared.opts.diffusers_seq_cpu_offload:
-                sd_model.enable_sequential_cpu_offload()
+                sd_model.enable_sequential_cpu_offload(device=devices.device)
                 shared.log.debug(f'Diffusers {op}: enable sequential CPU offload')
+                if shared.opts.diffusers_move_base or shared.opts.diffusers_move_refiner:
+                    shared.log.warning("Moving base or refiner model to CPU is not supported with sequential CPU offload")
+                    shared.log.debug('Disabled moving base model to CPU')
+                    shared.log.debug('Disabled moving refiner model to CPU')
+                    shared.opts.diffusers_move_base=False
+                    shared.opts.diffusers_move_refiner=False
         if hasattr(sd_model, "enable_vae_slicing"):
             if shared.cmd_opts.lowvram or shared.opts.diffusers_vae_slicing:
                 shared.log.debug(f'Diffusers {op}: enable VAE slicing')
@@ -680,11 +691,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             else:
                 sd_model.disable_attention_slicing()
         if hasattr(sd_model, "vae"):
-            if vae is not None:
-                shared.log.debug(f'Diffusers {op} VAE: name={vae.config.get("_name_or_path", "default")} upcast={vae.config.get("force_upcast", None)}')
-                sd_model.vae = vae # pylint: disable=attribute-defined-outside-init
-                if shared.opts.diffusers_vae_upcast != 'default':
-                    sd_model.vae.config.force_upcast = True if shared.opts.upcast_sampling == 'true' else False
+            shared.log.debug(f'Diffusers {op} VAE: name={sd_model.vae.config.get("_name_or_path", "default")} upcast={sd_model.vae.config.get("force_upcast", None)}')
         if shared.opts.cross_attention_optimization == "xFormers" and hasattr(sd_model, 'enable_xformers_memory_efficient_attention'):
             sd_model.enable_xformers_memory_efficient_attention()
         if shared.opts.opt_channelslast:
@@ -693,7 +700,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
 
         base_sent_to_cpu=False
         if shared.opts.cuda_compile and torch.cuda.is_available():
-            if op == 'refiner':
+            if op == 'refiner' and not shared.opts.diffusers_seq_cpu_offload:
                 gpu_vram = memory_stats().get('gpu', {})
                 free_vram = gpu_vram.get('total', 0) - gpu_vram.get('used', 0)
                 refiner_enough_vram = free_vram >= 7 if "StableDiffusionXL" in sd_model.__class__.__name__ else 3
@@ -712,7 +719,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
                     devices.torch_gc(force=True)
                     sd_model.to(devices.device)
                     base_sent_to_cpu=True
-            else:
+            elif not shared.opts.diffusers_seq_cpu_offload:
                 sd_model.to(devices.device)
             try:
                 shared.log.info(f"Compiling pipeline={sd_model.__class__.__name__} shape={8 * sd_model.unet.config.sample_size} mode={shared.opts.cuda_compile_mode}")
@@ -743,7 +750,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
         if op == 'refiner' and shared.opts.diffusers_move_refiner:
             shared.log.debug('Moving refiner model to CPU')
             sd_model.to("cpu")
-        else:
+        elif not shared.opts.diffusers_seq_cpu_offload:
             sd_model.to(devices.device)
         if op == 'refiner' and base_sent_to_cpu:
             shared.log.debug('Moving base model back to GPU')
@@ -927,10 +934,11 @@ def reload_model_weights(sd_model=None, info=None, reuse_dict=False, op='model')
         current_checkpoint_info = getattr(sd_model, 'sd_checkpoint_info', None)
         if current_checkpoint_info is not None and checkpoint_info is not None and current_checkpoint_info.filename == checkpoint_info.filename:
             return
-        if shared.cmd_opts.lowvram or shared.cmd_opts.medvram:
-            lowvram.send_everything_to_cpu()
-        else:
-            sd_model.to(devices.cpu)
+        if shared.backend == shared.Backend.ORIGINAL or not shared.opts.diffusers_seq_cpu_offload:
+            if shared.cmd_opts.lowvram or shared.cmd_opts.medvram:
+                lowvram.send_everything_to_cpu()
+            else:
+                sd_model.to(devices.cpu)
     if reuse_dict or (shared.opts.model_reuse_dict and sd_model is not None):
         shared.log.info('Reusing previous model dictionary')
         sd_hijack.model_hijack.undo_hijack(sd_model)
@@ -963,7 +971,7 @@ def reload_model_weights(sd_model=None, info=None, reuse_dict=False, op='model')
         timer.record("hijack")
         script_callbacks.model_loaded_callback(sd_model)
         timer.record("callbacks")
-        if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram:
+        if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram and (shared.backend == shared.Backend.ORIGINAL or not shared.opts.diffusers_seq_cpu_offload):
             sd_model.to(devices.device)
             timer.record("device")
     shared.log.info(f"Weights loaded in {timer.summary()}")
@@ -973,14 +981,16 @@ def unload_model_weights(op='model'):
     from modules import sd_hijack
     if op == 'model' or op == 'dict':
         if model_data.sd_model:
-            model_data.sd_model.to(devices.cpu)
+            if shared.backend == shared.Backend.ORIGINAL or not shared.opts.diffusers_seq_cpu_offload:
+                model_data.sd_model.to(devices.cpu)
             if shared.backend == shared.Backend.ORIGINAL:
                 sd_hijack.model_hijack.undo_hijack(model_data.sd_model)
             model_data.sd_model = None
             shared.log.debug(f'Weights unloaded {op}: {memory_stats()}')
     else:
         if model_data.sd_refiner:
-            model_data.sd_refiner.to(devices.cpu)
+            if shared.backend == shared.Backend.ORIGINAL or not shared.opts.diffusers_seq_cpu_offload:
+                model_data.sd_refiner.to(devices.cpu)
             if shared.backend == shared.Backend.ORIGINAL:
                 sd_hijack.model_hijack.undo_hijack(model_data.sd_refiner)
             model_data.sd_refiner = None

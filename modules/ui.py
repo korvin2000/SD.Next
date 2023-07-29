@@ -14,6 +14,7 @@ from modules import sd_hijack, sd_models, script_callbacks, ui_extensions, deepb
 from modules.ui_components import FormRow, FormColumn, FormGroup, ToolButton, FormHTML # pylint: disable=unused-import
 from modules.paths import script_path, data_path
 from modules.shared import opts, cmd_opts, readfile
+from modules.dml import directml_override_opts
 from modules import prompt_parser
 import modules.codeformer_model
 import modules.generation_parameters_copypaste as parameters_copypaste
@@ -384,7 +385,7 @@ def create_ui(startup_timer = None):
                     hr_second_pass_steps, latent_index = create_sampler_and_steps_selection(modules.sd_samplers.samplers, "txt2img", False)
                     with FormRow(elem_id="txt2img_hires_fix_row1", variant="compact"):
                         denoising_strength = gr.Slider(minimum=0.05, maximum=1.0, step=0.01, label='Denoising strength', value=0.3, elem_id="txt2img_denoising_strength")
-                        refiner_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, label='Denoise start', value=1.0, elem_id="txt2img_refiner_start")
+                        refiner_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, label='Denoise start', value=0.8, elem_id="txt2img_refiner_start")
                     with FormRow(elem_id="txt2img_hires_finalres", variant="compact"):
                         hr_final_resolution = FormHTML(value="", elem_id="txtimg_hr_finalres", label="Upscaled resolution", interactive=False)
                     with FormRow(elem_id="txt2img_hires_fix_row2", variant="compact"):
@@ -490,6 +491,7 @@ def create_ui(startup_timer = None):
                 (hr_scale, "Hires upscale"),
                 (hr_upscaler, "Hires upscaler"),
                 (hr_second_pass_steps, "Hires steps"),
+                (hr_second_pass_steps, "Secondary steps"),
                 (hr_resize_x, "Hires resize-1"),
                 (hr_resize_y, "Hires resize-2"),
                 *modules.scripts.scripts_txt2img.infotext_fields
@@ -839,6 +841,7 @@ def create_ui(startup_timer = None):
                 (hr_scale, "Hires upscale"),
                 (hr_upscaler, "Hires upscaler"),
                 (hr_second_pass_steps, "Hires steps"),
+                (hr_second_pass_steps, "Secondary steps"),
                 (hr_resize_x, "Hires resize-1"),
                 (hr_resize_y, "Hires resize-2"),
                 (image_cfg_scale, "Image CFG scale"),
@@ -948,6 +951,8 @@ def create_ui(startup_timer = None):
                 continue
             if opts.set(key, value):
                 changed.append(key)
+        if cmd_opts.use_directml:
+            directml_override_opts()
         try:
             opts.save(modules.shared.config_filename)
             modules.shared.log.info(f'Settings changed: {len(changed)} {changed}')
@@ -961,6 +966,8 @@ def create_ui(startup_timer = None):
             return gr.update(visible=True), opts.dumpjson()
         if not opts.set(key, value):
             return gr.update(value=getattr(opts, key)), opts.dumpjson()
+        if cmd_opts.use_directml:
+            directml_override_opts()
         opts.save(modules.shared.config_filename)
         modules.shared.log.debug(f'Setting changed: key={key}, value={value}')
         return get_value_for_setting(key), opts.dumpjson()
