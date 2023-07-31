@@ -548,8 +548,13 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
         "load_connected_pipeline": True  # always load end-to-end / connected pipelines
         # "use_safetensors": True,  # TODO(PVP) - we can't enable this for all checkpoints just yet
     }
-    if devices.dtype == torch.float16:
-        diffusers_load_config['variant'] = 'fp16'
+    if shared.opts.diffusers_model_load_variant == 'default':
+        if devices.dtype == torch.float16:
+            diffusers_load_config['variant'] = 'fp16'
+    elif shared.opts.diffusers_model_load_variant == 'fp32':
+        pass
+    else:
+        diffusers_load_config['variant'] = shared.opts.diffusers_model_load_variant
 
     if shared.opts.data.get('sd_model_checkpoint', '') == 'model.ckpt' or shared.opts.data.get('sd_model_checkpoint', '') == '':
         shared.opts.data['sd_model_checkpoint'] = "runwayml/stable-diffusion-v1-5"
@@ -713,7 +718,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
                         shared.opts.diffusers_move_base=True
                         shared.opts.diffusers_move_refiner=True
                     shared.log.debug('Moving base model to CPU')
-                    model_data.sd_model.to("cpu")
+                    model_data.sd_model.to(devices.cpu)
                     devices.torch_gc(force=True)
                     sd_model.to(devices.device)
                     base_sent_to_cpu=True
@@ -747,7 +752,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             sd_model.set_progress_bar_config(bar_format='Progress {rate_fmt}{postfix} {bar} {percentage:3.0f}% {n_fmt}/{total_fmt} {elapsed} {remaining}', ncols=80, colour='#327fba')
         if op == 'refiner' and shared.opts.diffusers_move_refiner and not sd_model.has_accelerate:
             shared.log.debug('Moving refiner model to CPU')
-            sd_model.to("cpu")
+            sd_model.to(devices.cpu)
         elif not sd_model.has_accelerate:
             # In offload modes, accelerate will move models around.
             sd_model.to(devices.device)

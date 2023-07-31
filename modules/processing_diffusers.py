@@ -56,7 +56,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         pipeline = model
         signature = inspect.signature(type(pipeline).__call__)
         possible = signature.parameters.keys()
-        generator_device = 'cpu' if shared.opts.diffusers_generator_device == "cpu" else shared.device
+        generator_device = devices.cpu if shared.opts.diffusers_generator_device == "cpu" else shared.device
         generator = [torch.Generator(generator_device).manual_seed(s) for s in seeds]
         if 'prompt' in possible:
             if hasattr(model, 'text_encoder') and 'prompt_embeds' in possible:
@@ -159,6 +159,9 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
     if shared.sd_refiner is None or not p.enable_hr:
         output.images = vae_decode(output.images, shared.sd_model)
 
+    if lora_state['active']:
+        unload_diffusers_lora()
+
     if refiner_enabled:
         for i in range(len(output.images)):
             if shared.opts.save and not p.do_not_save_samples and shared.opts.save_images_before_refiner and hasattr(shared.sd_model, 'vae'):
@@ -168,9 +171,9 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
                 for i in range(len(decoded)):
                     images.save_image(decoded[i], path=p.outpath_samples, basename="", seed=seeds[i], prompt=prompts[i], extension=shared.opts.samples_format, info=info, p=p, suffix="-before-refiner")
 
-        if shared.opts.diffusers_move_base and not shared.sd_model.has_accelerate:
+        if (shared.opts.diffusers_move_base or shared.cmd_opts.medvram or shared.opts.diffusers_model_cpu_offload) and not (shared.cmd_opts.lowvram or shared.opts.diffusers_seq_cpu_offload):
             shared.log.debug('Diffusers: Moving base model to CPU')
-            shared.sd_model.to('cpu')
+            shared.sd_model.to(devices.cpu)
             devices.torch_gc()
 
         if (not hasattr(shared.sd_refiner.scheduler, 'name')) or (shared.sd_refiner.scheduler.name != p.latent_sampler) and (p.sampler_name != 'Default'):
@@ -207,14 +210,13 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
 
         if shared.opts.diffusers_move_refiner and not shared.sd_refiner.has_accelerate:
             shared.log.debug('Diffusers: Moving refiner model to CPU')
-            shared.sd_refiner.to('cpu')
+            shared.sd_refiner.to(devices.cpu)
     else:
         results = output.images
 
     if p.is_hr_pass:
         shared.log.warning('Diffusers not implemented: hires fix')
 
-    if lora_state['active']:
-        unload_diffusers_lora()
+
 
     return results
