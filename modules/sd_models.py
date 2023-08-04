@@ -708,7 +708,7 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             sd_model.unet.to(memory_format=torch.channels_last)
 
         base_sent_to_cpu=False
-        if shared.opts.cuda_compile and torch.cuda.is_available():
+        if (shared.opts.cuda_compile or shared.opts.ipex_optimize) and torch.cuda.is_available():
             if op == 'refiner' and not sd_model.has_accelerate:
                 gpu_vram = memory_stats().get('gpu', {})
                 free_vram = gpu_vram.get('total', 0) - gpu_vram.get('used', 0)
@@ -731,20 +731,24 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             elif not sd_model.has_accelerate:
                 sd_model.to(devices.device)
             try:
-                shared.log.info(f"Compiling pipeline={sd_model.__class__.__name__} shape={8 * sd_model.unet.config.sample_size} mode={shared.opts.cuda_compile_mode}")
-                if shared.opts.cuda_compile_mode == 'ipex':
+                if shared.opts.ipex_optimize:
                     sd_model.unet.training = False
                     sd_model.unet = torch.xpu.optimize(sd_model.unet, dtype=devices.dtype_unet, inplace=True, weights_prepack=False) # pylint: disable=attribute-defined-outside-init
-                else:
+                    shared.log.info("Applied IPEX Optimize.")
+            except Exception as err:
+                shared.log.warning(f"IPEX Optimize not supported: {err}")
+            try:
+                if shared.opts.cuda_compile:
+                    shared.log.info(f"Compiling pipeline={sd_model.__class__.__name__} shape={8 * sd_model.unet.config.sample_size} mode={shared.opts.cuda_compile_backend}")
                     import torch._dynamo # pylint: disable=unused-import,redefined-outer-name
                     log_level = logging.WARNING if shared.opts.cuda_compile_verbose else logging.CRITICAL # pylint: disable=protected-access
                     if hasattr(torch, '_logging'):
                         torch._logging.set_logs(dynamo=log_level, aot=log_level, inductor=log_level) # pylint: disable=protected-access
                     torch._dynamo.config.verbose = shared.opts.cuda_compile_verbose # pylint: disable=protected-access
                     torch._dynamo.config.suppress_errors = shared.opts.cuda_compile_errors # pylint: disable=protected-access
-                    sd_model.unet = torch.compile(sd_model.unet, mode=shared.opts.cuda_compile_mode, fullgraph=shared.opts.cuda_compile_fullgraph) # pylint: disable=attribute-defined-outside-init
+                    sd_model.unet = torch.compile(sd_model.unet, mode=shared.opts.cuda_compile_mode, backend=shared.opts.cuda_compile_backend, fullgraph=shared.opts.cuda_compile_fullgraph) # pylint: disable=attribute-defined-outside-init
                     sd_model("dummy prompt")
-                shared.log.info("Complilation done.")
+                    shared.log.info("Complilation done.")
             except Exception as err:
                 shared.log.warning(f"Model compile not supported: {err}")
 

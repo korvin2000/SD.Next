@@ -185,8 +185,6 @@ def install(package, friendly: str = None, ignore: bool = False):
     if args.reinstall or args.upgrade:
         global quick_allowed # pylint: disable=global-statement
         quick_allowed = False
-    if args.use_ipex and package == "pytorch_lightning==1.9.4":
-        package = "pytorch_lightning==1.8.6"
     if args.reinstall or not installed(package, friendly):
         pip(f"install --upgrade {package}", ignore=ignore)
 
@@ -234,14 +232,18 @@ def branch(folder):
 
 # update git repository
 def update(folder, current_branch = False):
+    try:
+        git('config rebase.Autostash true')
+    except Exception:
+        pass
     if current_branch:
-        git('pull --autostash --rebase --force', folder)
+        git('pull --rebase --force', folder)
         return
     b = branch(folder)
     if branch is None:
-        git('pull --autostash --rebase --force', folder)
+        git('pull --rebase --force', folder)
     else:
-        git(f'pull origin {b} --autostash --rebase --force', folder)
+        git(f'pull origin {b} --rebase --force', folder)
 
 
 # clone git repository
@@ -323,7 +325,7 @@ def check_torch():
         os.environ.setdefault('NEOReadDebugKeys', '1')
         os.environ.setdefault('ClDeviceGlobalMemSizeAvailablePercent', '100')
         os.environ.setdefault('TENSORFLOW_PACKAGE', 'tensorflow==2.12.0 intel-extension-for-tensorflow[gpu]')
-        torch_command = os.environ.get('TORCH_COMMAND', 'torch==1.13.0a0+git6c9b55e torchvision==0.14.1a0 intel_extension_for_pytorch==1.13.120+xpu -f https://developer.intel.com/ipex-whl-stable-xpu')
+        torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.0.1a0 torchvision==0.15.2a0 intel_extension_for_pytorch==2.0.110+xpu -f https://developer.intel.com/ipex-whl-stable-xpu')
     else:
         machine = platform.machine()
         if sys.platform == 'darwin':
@@ -385,7 +387,7 @@ def check_torch():
                 pip('uninstall xformers --yes --quiet', ignore=True, quiet=True)
     except Exception as e:
         log.debug(f'Cannot install xformers package: {e}')
-    if opts.get('cuda_compile_mode', '') == 'hidet':
+    if opts.get('cuda_compile_backend', '') == 'hidet':
         install('hidet', 'hidet')
     if args.profile:
         print_profile(pr, 'Torch')
