@@ -67,9 +67,11 @@ class CheckpointInfo:
         else: # maybe a diffuser
             repo = [r for r in modelloader.diffuser_repos if filename == r['filename']]
             if len(repo) == 0:
-                error_message = f'Cannot find diffuser model: {filename}'
-                shared.log.error(error_message)
-                raise ValueError(error_message)
+                if filename.lower() != 'none':
+                    shared.log.error(f'Cannot find diffuser model: {filename}')
+                else:
+                    shared.log.info(f'Skipping model load: {filename}')
+                return
             self.name = repo[0]['name']
             self.hash = repo[0]['hash'][:8]
             self.sha256 = repo[0]['hash']
@@ -533,7 +535,6 @@ def change_backend():
 
 def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=None, op='model'): # pylint: disable=unused-argument
     import torch # pylint: disable=reimported,redefined-outer-name
-    devices.set_cuda_params()
     if timer is None:
         timer = Timer()
     import logging
@@ -566,17 +567,18 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
         if (model_data.sd_refiner is not None) and (checkpoint_info is not None) and (checkpoint_info.hash == model_data.sd_refiner.sd_checkpoint_info.hash): # trying to load the same model
             return
 
-    shared.log.debug(f'Diffusers load {op} config: {diffusers_load_config}')
     sd_model = None
 
     try:
-        if shared.cmd_opts.ckpt is not None and model_data.initial: # initial load
+        if shared.cmd_opts.ckpt is not None and model_data.initial: # initial load\
             ckpt_basename = os.path.basename(shared.cmd_opts.ckpt)
             model_name = modelloader.find_diffuser(ckpt_basename)
             if model_name is not None:
                 shared.log.info(f'Loading diffuser {op}: {model_name}')
                 model_file = modelloader.download_diffusers_model(hub_id=model_name)
+                devices.set_cuda_params()
                 try:
+                    shared.log.debug(f'Diffusers load {op} config: {diffusers_load_config}')
                     sd_model = diffusers.DiffusionPipeline.from_pretrained(model_file, **diffusers_load_config)
                 except Exception as e:
                     shared.log.error(f'Diffusers failed loading model: {model_file} {e}')
@@ -588,8 +590,8 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
             if checkpoint_info is None:
                 unload_model_weights(op=op)
                 return
-            shared.log.info(f'Loading diffuser {op}: {checkpoint_info.filename}')
 
+            devices.set_cuda_params()
             vae = None
             if op == 'model' or op == 'refiner':
                 vae_file, vae_source = sd_vae.resolve_vae(checkpoint_info.filename)
@@ -597,8 +599,10 @@ def load_diffuser(checkpoint_info=None, already_loaded_state_dict=None, timer=No
                 if vae is not None:
                     diffusers_load_config["vae"] = vae
 
+            shared.log.info(f'Loading diffuser {op}: {checkpoint_info.filename}')
             if not os.path.isfile(checkpoint_info.path):
                 try:
+                    shared.log.debug(f'Diffusers load {op} config: {diffusers_load_config}')
                     sd_model = diffusers.DiffusionPipeline.from_pretrained(checkpoint_info.path, **diffusers_load_config)
                 except Exception as e:
                     shared.log.error(f'Diffusers {op} failed loading model: {checkpoint_info.path} {e}')
