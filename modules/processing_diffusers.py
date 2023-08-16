@@ -29,7 +29,10 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
 
     def vae_decode(latents, model, output_type='np'):
         if hasattr(model, 'vae') and torch.is_tensor(latents):
-            shared.log.debug(f'Diffusers VAE decode: name={sd_vae.loaded_vae_file} dtype={model.vae.dtype} upcast={model.vae.config.get("force_upcast", None)}')
+            if latents.shape[0] == 0:
+                shared.log.error(f'VAE nothing to decode: {latents.shape}')
+                return []
+            shared.log.debug(f'Diffusers VAE decode: name={sd_vae.loaded_vae_file} dtype={model.vae.dtype} upcast={model.vae.config.get("force_upcast", None)} images={latents.shape[0]}')
             if shared.opts.diffusers_move_unet and not model.has_accelerate:
                 shared.log.debug('Diffusers: Moving UNet to CPU')
                 unet_device = model.unet.device
@@ -157,8 +160,19 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         if sampler is None:
             sampler = sd_samplers.all_samplers_map.get("UniPC")
         sd_samplers.create_sampler(sampler.name, shared.sd_model) # TODO(Patrick): For wrapped pipelines this is currently a no-op
+        sampler_options = f'type:{shared.opts.schedulers_prediction_type} ' if shared.opts.schedulers_prediction_type != 'default' else ''
+        sampler_options += 'no_karras ' if not shared.opts.schedulers_use_karras else ''
+        sampler_options += 'no_low_order' if not shared.opts.schedulers_use_loworder else ''
+        sampler_options += 'dynamic_thresholding' if shared.opts.schedulers_use_thresholding else ''
+        sampler_options += f'solver:{shared.opts.schedulers_dpm_solver}' if shared.opts.schedulers_dpm_solver != 'sde-dpmsolver++' else ''
+        sampler_options += f'beta:{shared.opts.schedulers_beta_schedule}:{shared.opts.schedulers_beta_start}:{shared.opts.schedulers_beta_end}' if shared.opts.schedulers_beta_schedule != 'default' else ''
+        p.extra_generation_params['Sampler options'] = sampler_options if len(sampler_options) > 0 else None
+        p.extra_generation_params['Pipeline'] = shared.sd_model.__class__.__name__
 
     cross_attention_kwargs={}
+    if len(getattr(p, 'init_images', [])) > 0:
+        while len(p.init_images) < len(prompts):
+            p.init_images.append(p.init_images[-1])
     if lora_state['active']:
         cross_attention_kwargs['scale'] = lora_state['multiplier']
     task_specific_kwargs={}
@@ -195,8 +209,9 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         clip_skip=p.clip_skip,
         **task_specific_kwargs
     )
+    p.extra_generation_params['CFG rescale'] = p.diffusers_guidance_rescale
+    p.extra_generation_params["Eta DDIM"] = shared.opts.eta_ddim if shared.opts.eta_ddim is not None and shared.opts.eta_ddim > 0 else None
     output = shared.sd_model(**pipe_args) # pylint: disable=not-callable
-
     if shared.state.interrupted or shared.state.skipped:
         unload_diffusers_lora()
         return results
@@ -205,6 +220,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         output.images = vae_decode(output.images, shared.sd_model) if p.full_quality else taesd_vae_decode(output.images, shared.sd_model)
 
     if lora_state['active']:
+        p.extra_generation_params['Lora method'] = shared.opts.diffusers_lora_loader
         unload_diffusers_lora()
 
     if refiner_enabled:
@@ -251,6 +267,10 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
                 clip_skip=p.clip_skip,
             )
             refiner_output = shared.sd_refiner(**pipe_args) # pylint: disable=not-callable
+            p.extra_generation_params['Refiner CFG scale'] = p.image_cfg_scale if p.image_cfg_scale is not None else None
+            p.extra_generation_params['Refiner start'] = p.refiner_start
+            p.extra_generation_params["Hires steps"] = p.hr_second_pass_steps
+
             if not shared.state.interrupted and not shared.state.skipped:
                 refiner_images = vae_decode(refiner_output.images, shared.sd_refiner)
                 results.append(refiner_images[0])

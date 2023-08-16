@@ -1,5 +1,20 @@
 # Change Log for SD.Next
 
+## Update for 2023-08-14
+
+- general:
+  - update all metadata saved with images  
+    see <https://github.com/vladmandic/automatic/wiki/Metadata> for details  
+    (work-in-progress)
+  - improved **amd** installer with support for **navi 2x & 3x** and **rocm 5.4/5.5/5.6**  
+    thanks @evshiron  
+  - fix img2img resizing (applies to original, diffusers, hires)  
+- diffusers:
+  - enable batch img2img workflows
+- original:
+  - new samplers: **dpm++ 3M sde** (standard and karras variations)  
+    enable in *settings -> samplers -> show samplers*
+
 ## Update for 2023-08-11
 
 This is a big one that's been cooking in `dev` for a while now, but finally ready for release...
