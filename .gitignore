@@ -16,6 +16,7 @@ package-lock.json
 venv
 .history
 **/.DS_Store
+cache
 
 # all models and temp files
 *.log

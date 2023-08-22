@@ -966,6 +966,9 @@ def create_ui(startup_timer = None):
                 changed.append(key)
         if cmd_opts.use_directml:
             directml_override_opts()
+        if cmd_opts.use_openvino:
+            from modules.intel.openvino import openvino_override_opts
+            openvino_override_opts()
         try:
             opts.save(modules.shared.config_filename)
             log.info(f'Settings changed: {len(changed)} {changed}')
