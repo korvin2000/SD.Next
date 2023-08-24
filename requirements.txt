@@ -4,6 +4,7 @@ aiohttp
 anyio
 appdirs
 astunparse
+bitsandbytes
 blendmodes
 clean-fid
 easydev
@@ -35,6 +36,7 @@ scipy
 tb_nightly
 toml
 torchdiffeq
+torchsde
 voluptuous
 yapf
 scikit-image
@@ -47,13 +49,13 @@ requests==2.31.0
 tqdm==4.65.0
 accelerate==0.20.3
 opencv-python-headless==4.7.0.72
-diffusers==0.20.0
+diffusers==0.19.3
 einops==0.4.1
 gradio==3.32.0
 huggingface_hub==0.16.4
 numexpr==2.8.4
-numpy==1.24.4
-numba==0.57.1
+numpy==1.23.5
+numba==0.57.0
 pandas==1.5.3
 protobuf==3.20.3
 pytorch_lightning==1.9.4
