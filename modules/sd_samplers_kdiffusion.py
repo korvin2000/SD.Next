@@ -32,6 +32,8 @@ samplers_k_diffusion = [
     ('LMS', 'sample_lms', ['k_lms'], {}),
     ('LMS Karras', 'sample_lms', ['k_lms_ka'], {'scheduler': 'karras'}),
     ('Heun', 'sample_heun', ['k_heun'], {"second_order": True}),
+    ('DPM++ 2M v2', 'sample_dpmpp_2m_v2', ['k_dpmpp_2m'], {}),
+    ('DPM++ 2M Karras v2', 'sample_dpmpp_2m_v2', ['k_dpmpp_2m_ka'], {'scheduler': 'karras'}),
 ]
 
 samplers_data_k_diffusion = [

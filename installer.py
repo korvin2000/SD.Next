@@ -683,6 +683,7 @@ def install_requirements():
 # set environment variables controling the behavior of various libraries
 def set_environment():
     log.debug('Setting environment tuning')
+    os.environ.setdefault('PYTORCH_NO_CUDA_MEMORY_CACHING', '1')
     os.environ.setdefault('USE_TORCH', '1')
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
     os.environ.setdefault('ACCELERATE', 'True')
